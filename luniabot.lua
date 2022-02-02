@@ -2,22 +2,14 @@ local config = {
 	waypointDirectory = "mods/otcbot/waypoints/",
 }
 
-local walkEvent = nil
 local stop = false
 local isAttacking = false
 local isFollowing = false
 local currentTargetPositionId = 1
 local waypoints = {}
 local autowalkTargetPosition = waypoints[currentTargetPositionId]
-local atkLoopId = nil
-local atkSpellLoopId = nil
 local itemHealingLoopId = nil
-local spellHealingLoopId = nil
-local manaLoopId = nil
-local hasteLoopId = nil
-local buffLoopId = nil
 local hasLured = false
-local shieldLoopId = nil
 local player = nil
 local healingItem 
 local manaItem
@@ -41,6 +33,19 @@ function init()
 	buffButton = luniaBotWindow:getChildById("AutoBuff")
 	lureButton = luniaBotWindow:getChildById("LureMonsters")
 	manaShieldButton = luniaBotWindow:getChildById("AutoManaShield")
+	antiIdleButton = luniaBotWindow:getChildById("AntiIdle")
+
+	buttonEvent = {
+		autoAttack =     {f = atkLoop,          e = nil },
+		walking =        {f = walkToTarget,     e = nil },
+		AutoHealSpell =  {f = healingSpellLoop, e = nil },
+		AtkSpell =       {f = atkSpellLoop,     e = nil },
+		ManaTrain =      {f = manaTrainLoop,    e = nil },
+		AutoHaste =      {f = hasteLoop,        e = nil },
+		AutoManaShield = {f = shieldLoop,       e = nil },
+		AntiIdle =       {f = antiIdleLoop,     e = nil },
+		AutoBuff =       {f = buffLoop,         e = nil }
+	}
 
 	healthItemButton.onCheckChange = autoHealPotion
 	manaRestoreButton.onCheckChange = autoManaPotion
@@ -60,7 +65,7 @@ function init()
 	luniaBotWindow:getChildById("LureMinimum").onTextChange = saveBotText
 	luniaBotWindow:getChildById("LureMaximum").onTextChange = saveBotText
 
-	connect(g_game, { onGameStart = logIn})
+	connect(g_game, { onGameStart = logIn, onGameEnd = logOut})
 end
 
 
@@ -71,16 +76,18 @@ end
 
 function logIn()
 	player = g_game.getLocalPlayer()
+	print("Logged in as player: "..player:getName())
 
-		--Fixes default values
+	-- Fixes default values
 	if(luniaBotWindow:getChildById("HealItem"):getText()) == ",266" then
 		luniaBotWindow:getChildById("HealItem"):setText('266')
 	end
+	
 	if(luniaBotWindow:getChildById("ManaItem"):getText()) == ",268" then
 		luniaBotWindow:getChildById("ManaItem"):setText('268')
 	end
 
-	local checkButtons = {atkButton, healthSpellButton, walkButton, healthItemButton, manaRestoreButton, atkSpellButton, manaTrainButton, hasteButton, manaShieldButton, buffButton, lureButton}
+	local checkButtons = {atkButton, healthSpellButton, walkButton, healthItemButton, manaRestoreButton, atkSpellButton, manaTrainButton, hasteButton, manaShieldButton, antiIdleButton, buffButton, lureButton}
 	for _,checkButton in ipairs(checkButtons) do
 		checkButton:setChecked(g_settings.getBoolean(player:getName() .. " " .. checkButton:getId()))
 	end
@@ -88,10 +95,15 @@ function logIn()
 	local textBoxes = {luniaBotWindow.ManaSpellText, luniaBotWindow.HasteText, luniaBotWindow.AtkSpellText, luniaBotWindow.HealSpellText, luniaBotWindow.HealthSpellPercent, luniaBotWindow.HealItem, luniaBotWindow.HealItemPercent, luniaBotWindow.ManaItem, luniaBotWindow.ManaPercent, luniaBotWindow.WptName, luniaBotWindow.BuffText, luniaBotWindow.LureMinimum, luniaBotWindow.LureMaximum}
 	for _,textBox in ipairs(textBoxes) do
 		local storedText = g_settings.get(player:getName() .. " " .. textBox:getId())
-		if (string.len(storedText) >= 1) then
+		if string.len(storedText) >= 1 then
 			textBox:setText(g_settings.get(player:getName() .. " " .. textBox:getId()))
 		end
 	end
+end
+
+function logOut()
+	print("Logged out with player: "..player:getName())
+	player = nil
 end
 
 
@@ -119,29 +131,21 @@ end
 
 
 function toggleLoop(key)
+	print("toggleLoop("..key..")")
 	--maybe remove some looops, for example healing could be done through events
-	local bts = {
-		autoAttack = {atkLoop, atkLoopId},
-		walking = {walkToTarget, walkEvent},
-		AutoHealSpell = {healingSpellLoop, spellHealingLoopId},
-		AtkSpell = {atkSpellLoop, atkSpellLoopId},
-		ManaTrain = {manaTrainLoop, manaLoopId},
-		AutoHaste = {hasteLoop, hasteLoopId},
-		AutoManaShield = {shieldLoop, shieldLoopId},
-		AutoBuff = {buffLoop, buffLoopId},
-	}
-
 	local btn = luniaBotWindow:getChildById(key)
-	local bt = bts[btn:getId()]
+	local btn_id = btn:getId()
 	if (btn:isChecked()) then
 		g_settings.set(player:getName() .. " " .. btn:getId(), true)
-		if (bt) then
-			bt[1]()
+		if buttonEvent[btn_id] then 
+			print("Toggle Starting: "..key) 
+			buttonEvent[btn_id]['e'] = scheduleEvent(buttonEvent[btn_id]['f'], 100) 
 		end
 	else
 		g_settings.set(player:getName() .. " " .. btn:getId(), false)
-		if (bt) then
-			removeEvent(bt[2])
+		if buttonEvent[btn_id] then 
+			print("Toggle Stopping: "..key) 
+			removeEvent(buttonEvent[btn_id]['e']) 
 		end
 	end
 end
@@ -183,12 +187,12 @@ end
 
 
 local function getDistanceBetween(p1, p2)
-    return math.max(math.abs(p1.x - p2.x), math.abs(p1.y - p2.y))
+	return math.max(math.abs(p1.x - p2.x), math.abs(p1.y - p2.y))
 end
 
 
 function Player.canAttack(self)
-    return not self:hasState(16384) and not g_game.isAttacking()
+	return not self:hasState(16384) and not g_game.isAttacking()
 end
 
 
@@ -227,7 +231,9 @@ end
 
 
 function atkLoop() 
-	if(player:canAttack()) then
+	if not player or not buttonEvent['autoAttack']['e'] then print("autoAttack loop cancelled") return end
+	
+	if player:canAttack() then
 		local pPos = player:getPosition()
 		local luredMob = {}
 		local lureAmount = tonumber(luniaBotWindow:getChildById("LureMaximum"):getText())
@@ -254,14 +260,15 @@ function atkLoop()
 				if getDistanceBetween(pPos, cPos) <= 5 and creature:isMonster() and player:canReach(creature) then
 					if (not luring or hasLured) then
 						g_game.attack(creature)
-						atkLoopId = scheduleEvent(atkLoop, 200)
+						buttonEvent['autoAttack']['e'] = scheduleEvent(buttonEvent['autoAttack']['f'], 250)
 						return
 					end
 				end
 			end
 		end
 	end
-	atkLoopId = scheduleEvent(atkLoop, 200)
+	
+	buttonEvent['autoAttack']['e'] = scheduleEvent(buttonEvent['autoAttack']['f'], 250)
 end
 
 
@@ -274,12 +281,10 @@ end
 
 
 function walkToTarget()
+	if not player or not buttonEvent['walking']['e'] then print("walking loop cancelled 1") return end
+
 	--found this function made by gesior, i edited it abit, maybe there's better ways to walk? 
 	autowalkTargetPosition = waypoints[currentTargetPositionId]
-    if not g_game.isOnline() then
-		walkEvent = scheduleEvent(walkToTarget, 500)
-        return
-	end
 
 	local playerPos = player:getPosition()
 	if (playerPos and autowalkTargetPosition) then
@@ -288,47 +293,51 @@ function walkToTarget()
 			if (currentTargetPositionId > #waypoints) then
 				currentTargetPositionId = 1
 			end
-			walkEvent = scheduleEvent(walkToTarget, 1500)
+			buttonEvent['walking']['e'] = scheduleEvent(buttonEvent['walking']['f'], 1500)
 			return 
 		end
 	end
-	-- if g_game.getLocalPlayer():getStepTicksLeft() > 0 then
-	-- 	walkEvent = scheduleEvent(walkToTarget, g_game.getLocalPlayer():getStepTicksLeft())
-    --     return
-	-- end
+
 	if g_game.isAttacking() or isFollowing then
-		walkEvent = scheduleEvent(walkToTarget, 100)
-        return
+		buttonEvent['walking']['e'] = scheduleEvent(buttonEvent['walking']['f'], 300)
+		return
 	end
+
 	if not autowalkTargetPosition then
 		currentTargetPositionId = currentTargetPositionId + 1
 		if (currentTargetPositionId > #waypoints) then
 			currentTargetPositionId = 1
 		end
-		walkEvent = scheduleEvent(walkToTarget, 100)
+		buttonEvent['walking']['e'] = scheduleEvent(buttonEvent['walking']['f'], 100)
 		return
 	end
-    -- fast search path on minimap (known tiles)
-    steps, result = g_map.findPath(g_game.getLocalPlayer():getPosition(), autowalkTargetPosition, 5000, 0)
+
+	-- fast search path on minimap (known tiles)
+	if not player or not buttonEvent['walking']['e'] then print("walking loop cancelled 2") return end
+	steps, result = g_map.findPath(player:getPosition(), autowalkTargetPosition, 5000, 0)
+	
 	if result == PathFindResults.Ok then
-        g_game.walk(steps[1], true)
+		g_game.walk(steps[1], true)
 	elseif result == PathFindResults.Position then
 		currentTargetPositionId = currentTargetPositionId + 1
 		if (currentTargetPositionId > #waypoints) then
 			currentTargetPositionId = 1
 		end
-    else
-        -- slow search path on minimap, if not found, start 'scanning' map
-        steps, result = g_map.findPath(g_game.getLocalPlayer():getPosition(), autowalkTargetPosition, 25000, 1)
-        if result == PathFindResults.Ok then
-            g_game.walk(steps[1], true)
+	else
+		-- slow search path on minimap, if not found, start 'scanning' map
+		if not player then return end
+		steps, result = g_map.findPath(player:getPosition(), autowalkTargetPosition, 25000, 1)
+		if result == PathFindResults.Ok then
+			g_game.walk(steps[1], true)
 		else
 			-- can't reach?  so skip this waypoint. improve this somehow
 			currentTargetPositionId = currentTargetPositionId + 1
 		end
-    end
-    -- limit steps to 10 per second (100 ms between steps)
-    walkEvent = scheduleEvent(walkToTarget, math.max(100, g_game.getLocalPlayer():getStepTicksLeft()))
+	end
+	
+	-- limit steps to 10 per second (100 ms between steps)
+	local nextStep = math.max(100, player:getStepTicksLeft())
+	buttonEvent['walking']['e'] = scheduleEvent(buttonEvent['walking']['f'], nextStep)
 end
 
 
@@ -375,6 +384,7 @@ end
 
 
 function itemHealingLoop()
+	if not player then return end
 	-- Prioritize healing item instead of mana
 	if healingItem then
 		local hpItemPercentage = tonumber(luniaBotWindow:getChildById("HealItemPercent"):getText())
@@ -396,73 +406,91 @@ end
 
 
 function healingSpellLoop()
+	if not player or not buttonEvent['AutoHealSpell']['e'] then print("AutoHealSpell loop cancelled") return end
+
 	local healingSpellPercentage = tonumber(luniaBotWindow:getChildById("HealthSpellPercent"):getText())
 	local healSpell = luniaBotWindow:getChildById("HealSpellText"):getText()
-	if (not player) then
-		spellHealingLoopId = scheduleEvent(healingSpellLoop, 502)
-	end
 	if (player:getHealth() <= (player:getMaxHealth() * (healingSpellPercentage/100))) then
 		g_game.talk(healSpell)
 	end
-	spellHealingLoopId = scheduleEvent(healingSpellLoop, 502)
+	
+	buttonEvent['AutoHealSpell']['e'] = scheduleEvent(buttonEvent['AutoHealSpell']['f'], 502)
 end
 
 
 function manaTrainLoop()
+	if not player or not buttonEvent['ManaTrain']['e'] then print("ManaTrain loop cancelled") return end
+
 	local manaTrainPercentage = tonumber(luniaBotWindow:getChildById("ManaTrainPercent"):getText())
 	local manaSpell = luniaBotWindow:getChildById("ManaSpellText"):getText()
-	if (not player) then
-		manaLoopId = scheduleEvent(manaTrainLoop, 1000)
-	end
 	if (player:getMana() >= (player:getMaxMana() * (manaTrainPercentage/100))) then
 		g_game.talk(manaSpell)
 	end
-	manaLoopId = scheduleEvent(manaTrainLoop, 1000)
+	
+	buttonEvent['ManaTrain']['e'] = scheduleEvent(buttonEvent['ManaTrain']['f'], 1000)
 end
 
 
 function hasteLoop()
+	if not player or not buttonEvent['AutoHaste']['e'] then print("AutoHaste loop cancelled") return end
+
 	local hasteSpell = luniaBotWindow:getChildById("HasteText"):getText()
-	if (not player) then
-		hasteLoopId = scheduleEvent(hasteLoop, 1000)
-	end
 	if (player:getHealth() >= (player:getMaxHealth() * (70/100))) then -- only cast when healthy
 		if (not player:hasState(PlayerStates.Haste, player:getStates())) then
 			g_game.talk(hasteSpell)
 		end
 	end
-	hasteLoopId = scheduleEvent(hasteLoop, 1000)
+
+	buttonEvent['AutoHaste']['e'] = scheduleEvent(buttonEvent['AutoHaste']['f'], 1000)
 end
 
 
 function buffLoop()
+	if not player or not buttonEvent['AutoBuff']['e'] then print("AutoBuff loop cancelled") return end
+
 	local buffSpell = luniaBotWindow:getChildById("BuffText"):getText()
-	if (not player) then
-		buffLoopId = scheduleEvent(buffLoop, 1000)
-	end
 	if (not player:hasState(PlayerStates.PartyBuff, player:getStates())) then
 		g_game.talk(buffSpell)
 	end
-	buffLoopId = scheduleEvent(buffLoop, 1000)
+	
+	buttonEvent['AutoBuff']['e'] = scheduleEvent(buttonEvent['AutoBuff']['f'], 1000)
 end
 
 
 function shieldLoop()
-	if (not player) then
-		shieldLoopId = scheduleEvent(shieldLoop, 1000)
-	end
+	if not player or not buttonEvent['AutoManaShield']['e'] then print("AutoManaShield loop cancelled") return end
+
 	if (not player:hasState(PlayerStates.ManaShield, player:getStates())) then
 		g_game.talk('utamo vita')
 	end
-	shieldLoopId = scheduleEvent(shieldLoop, 1000)
+
+	buttonEvent['AutoManaShield']['e'] = scheduleEvent(buttonEvent['AutoManaShield']['f'], 1000)
+end
+
+
+function antiIdleTurnPlayer()
+	if not player or not player:getPosition() then return end
+	g_game.turn((player:getDirection() + 2) % 4)
+end
+function antiIdleLoop()
+	if not player or not buttonEvent['AntiIdle']['e'] then print("AntiIdle loop cancelled") return end
+
+	antiIdleTurnPlayer()
+	scheduleEvent(antiIdleTurnPlayer, 200)
+	local nextLoop = math.random(8, 14) * 60 * 1000
+	--local nextLoop = math.random(2, 4) * 1000
+
+	buttonEvent['AntiIdle']['e'] = scheduleEvent(buttonEvent['AntiIdle']['f'], nextLoop)
 end
 
 
 function atkSpellLoop()
+	if not player or not buttonEvent['AtkSpell']['e'] then print("AtkSpell loop cancelled") return end
+
 	local atkSpell = luniaBotWindow:getChildById("AtkSpellText"):getText()
 	if (g_game.isAttacking()) then
 		g_game.talk(atkSpell)
 	end
-	atkSpellLoopId = scheduleEvent(atkSpellLoop, 502)
-end
 
+	buttonEvent['AtkSpell']['e'] = scheduleEvent(buttonEvent['AtkSpell']['f'], 502)
+end
